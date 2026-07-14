@@ -424,6 +424,13 @@ r.post('/migracion/sql', requireAdmin, sqlUpload.single('archivo'), wrap(async (
     return res.status(400).json({ error: 'Ese archivo no parece un respaldo de la base de datos' });
   }
 
+  // los exports de phpMyAdmin no traen DROP TABLE: agregarlo para poder
+  // reimportar sobre las tablas ya existentes (la de usuarios nunca se toca)
+  sql = sql.replace(/^CREATE TABLE (?:IF NOT EXISTS )?`?([A-Za-z0-9_]+)`?/gim, (m, tabla) =>
+    tabla.toLowerCase() === 'usuarios'
+      ? m
+      : 'DROP TABLE IF EXISTS `' + tabla + '`;\nCREATE TABLE `' + tabla + '`');
+
   const cfg = pool.pool.config.connectionConfig;
   const conn = await mysql.createConnection({
     host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
