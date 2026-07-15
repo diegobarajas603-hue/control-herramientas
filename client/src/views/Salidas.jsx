@@ -1,22 +1,35 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { Confirmar, Buscador, Vacio, useToast, fechaBonita, normalizar } from '../ui.jsx';
+import { Confirmar, Buscador, Vacio, Cargando, useToast, fechaBonita, normalizar } from '../ui.jsx';
 
 export default function Salidas() {
   const avisar = useToast();
   const [salidas, setSalidas] = useState([]);
+  const [departamentos, setDepartamentos] = useState([]);
   const [busqueda, setBusqueda] = useState('');
   const [borrar, setBorrar] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [cargando, setCargando] = useState(true);
   const [errorFolio, setErrorFolio] = useState('');
-  const [form, setForm] = useState({ folio: '', nombre: '', proveedor: '', observaciones: '' });
+  const [form, setForm] = useState({ folio: '', nombre: '', proveedor: '', observaciones: '', departamento_id: '', descripcion: '' });
 
-  const cargar = () => api.get('/api/salidas').then(setSalidas).catch(() => {});
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const [sals, depts] = await Promise.all([
+        api.get('/api/salidas'),
+        api.get('/api/departamentos')
+      ]);
+      setSalidas(sals);
+      setDepartamentos(depts);
+    } catch (e) {}
+    finally { setCargando(false); }
+  };
   useEffect(() => { cargar(); }, []);
 
   const visibles = useMemo(() => {
     const q = normalizar(busqueda);
-    return salidas.filter(s => !q || normalizar(`${s.folio} ${s.nombre} ${s.proveedor} ${s.observaciones}`).includes(q));
+    return salidas.filter(s => !q || normalizar(`${s.folio} ${s.nombre} ${s.proveedor} ${s.observaciones} ${s.departamento_nombre || ''} ${s.descripcion || ''}`).includes(q));
   }, [salidas, busqueda]);
 
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); if (k === 'folio') setErrorFolio(''); };
@@ -28,7 +41,7 @@ export default function Salidas() {
     try {
       const r = await api.post('/api/salidas', form);
       avisar(`Salida ${form.folio} registrada`);
-      setForm({ folio: '', nombre: '', proveedor: '', observaciones: '' });
+      setForm({ folio: '', nombre: '', proveedor: '', observaciones: '', departamento_id: '', descripcion: '' });
       cargar();
       window.open(`/api/salidas/${r.id}/pdf`, '_blank');
     } catch (err) {
@@ -61,6 +74,14 @@ export default function Salidas() {
           <input className="input" required value={form.nombre} onChange={e => set('nombre', e.target.value)} /></div>
         <div className="field"><label>Proveedor</label>
           <input className="input" required value={form.proveedor} onChange={e => set('proveedor', e.target.value)} /></div>
+        <div className="field"><label>Departamento</label>
+          <select className="select" value={form.departamento_id} onChange={e => set('departamento_id', e.target.value)}>
+            <option value="">— Sin asignar —</option>
+            {departamentos.map(d => <option key={d.id_departamento} value={d.id_departamento}>{d.nombre}</option>)}
+          </select></div>
+        <div className="field"><label>Descripción (qué se llevó)</label>
+          <textarea className="textarea" placeholder="Describe qué se lleva..."
+            value={form.descripcion} onChange={e => set('descripcion', e.target.value)} /></div>
         <div className="field"><label>Observaciones</label>
           <textarea className="textarea" required placeholder="Describe el material que sale..."
             value={form.observaciones} onChange={e => set('observaciones', e.target.value)} /></div>
@@ -75,20 +96,21 @@ export default function Salidas() {
         <Buscador valor={busqueda} onCambio={setBusqueda}
           placeholder="Buscar por folio, nombre, proveedor u observaciones..." total={visibles.length} />
 
-        {visibles.length === 0
+        {cargando ? <Cargando />
+          : visibles.length === 0
           ? <Vacio icono="🚚" texto="No hay salidas que coincidan" />
           : (
             <div style={{ overflowX: 'auto' }}>
               <table className="table">
                 <thead>
-                  <tr><th>Folio</th><th>Nombre</th><th>Proveedor</th><th>Fecha</th><th style={{ width: 170 }}></th></tr>
+                  <tr><th>Folio</th><th>Nombre</th><th>Departamento</th><th>Fecha</th><th style={{ width: 170 }}></th></tr>
                 </thead>
                 <tbody>
                   {visibles.map(s => (
                     <tr key={s.id_salida}>
                       <td style={{ fontWeight: 700 }}>{s.folio}</td>
                       <td>{s.nombre}</td>
-                      <td>{s.proveedor}</td>
+                      <td style={{ fontSize: 13, color: 'var(--muted)' }}>{s.departamento_nombre || '—'}</td>
                       <td style={{ color: 'var(--muted)', fontSize: 13 }}>{fechaBonita(s.created_at)}</td>
                       <td style={{ textAlign: 'right' }}>
                         <a className="btn ghost sm" href={`/api/salidas/${s.id_salida}/pdf`} target="_blank" rel="noreferrer">📄 PDF</a>{' '}

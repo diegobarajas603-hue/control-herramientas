@@ -7,7 +7,7 @@ const os = require('os');
 const mysql = require('mysql2/promise');
 const unzipper = require('unzipper');
 
-const { pool, UPLOADS_DIR } = require('./db');
+const { pool, asegurarColumnas, UPLOADS_DIR } = require('./db');
 const { firmar, setCookie, clearCookie, requireAuth, requireAdmin } = require('./auth');
 const { responsiva, salidaAlmacen } = require('./pdf');
 
@@ -192,6 +192,15 @@ r.post('/empleados/:id/toggle', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+r.delete('/empleados/:id', wrap(async (req, res) => {
+  const id = +req.params.id;
+  const [act] = await pool.query('SELECT 1 FROM asignaciones WHERE empleado_id=? AND activa=1 LIMIT 1', [id]);
+  if (act.length) return res.status(409).json({ error: 'Tiene herramientas asignadas; primero devuélvelas en "Ver herramientas"' });
+  await pool.query('DELETE FROM asignaciones WHERE empleado_id=?', [id]);
+  await pool.query('DELETE FROM empleados WHERE id_empleado=?', [id]);
+  res.json({ ok: true });
+}));
+
 r.get('/empleados/:id', wrap(async (req, res) => {
   const id = +req.params.id;
   const [emp] = await pool.query(`
@@ -329,7 +338,12 @@ r.get('/responsiva/:empleadoId', wrap(async (req, res) => {
 /* ==================== SALIDAS DE ALMACÉN ==================== */
 
 r.get('/salidas', wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM salidas_almacen ORDER BY id_salida DESC');
+  const [rows] = await pool.query(`
+    SELECT s.*, d.nombre AS departamento_nombre
+    FROM salidas_almacen s
+    LEFT JOIN departamentos d ON s.departamento_id = d.id_departamento
+    ORDER BY s.id_salida DESC
+  `);
   res.json(rows);
 }));
 
@@ -338,6 +352,8 @@ r.post('/salidas', wrap(async (req, res) => {
   const nombre = (req.body.nombre || '').trim();
   const proveedor = (req.body.proveedor || '').trim();
   const observaciones = (req.body.observaciones || '').trim();
+  const departamento_id = req.body.departamento_id ? +req.body.departamento_id : null;
+  const descripcion = (req.body.descripcion || '').trim();
   if (!folio || !nombre || !proveedor || !observaciones) return res.status(400).json({ error: 'Llena todos los campos' });
   const [dup] = await pool.query('SELECT 1 FROM salidas_almacen WHERE folio=?', [folio]);
   if (dup.length) return res.status(409).json({ error: `El folio "${folio}" ya existe — la salida NO se registró` });
@@ -345,8 +361,8 @@ r.post('/salidas', wrap(async (req, res) => {
   const p = n => String(n).padStart(2, '0');
   const d = new Date();
   const [ins] = await pool.query(
-    'INSERT INTO salidas_almacen(folio, nombre, proveedor, observaciones, fecha, hora, pdf) VALUES(?,?,?,?,?,?,?)',
-    [folio, nombre, proveedor, observaciones,
+    'INSERT INTO salidas_almacen(folio, nombre, proveedor, observaciones, departamento_id, descripcion, fecha, hora, pdf) VALUES(?,?,?,?,?,?,?,?,?)',
+    [folio, nombre, proveedor, observaciones, departamento_id, descripcion,
       `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
       `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
       folio.replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf']);
@@ -359,7 +375,12 @@ r.delete('/salidas/:id', wrap(async (req, res) => {
 }));
 
 r.get('/salidas/:id/pdf', wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM salidas_almacen WHERE id_salida=?', [+req.params.id]);
+  const [rows] = await pool.query(`
+    SELECT s.*, d.nombre AS departamento_nombre
+    FROM salidas_almacen s
+    LEFT JOIN departamentos d ON s.departamento_id = d.id_departamento
+    WHERE s.id_salida=?
+  `, [+req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'Salida no encontrada' });
   salidaAlmacen(res, rows[0]);
 }));
@@ -441,6 +462,9 @@ r.post('/migracion/sql', requireAdmin, sqlUpload.single('archivo'), wrap(async (
   } finally {
     await conn.end();
   }
+
+  // el respaldo recrea salidas_almacen con el esquema viejo: reponer columnas nuevas
+  await asegurarColumnas();
 
   const conteo = {};
   for (const t of ['departamentos', 'empleados', 'categorias', 'herramientas', 'asignaciones', 'salidas_almacen']) {

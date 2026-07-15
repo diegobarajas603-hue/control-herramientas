@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { Modal, Confirmar, Buscador, Foto, Vacio, useToast, iniciales, fechaBonita, normalizar } from '../ui.jsx';
+import { Modal, Confirmar, Buscador, Foto, Vacio, Cargando, useToast, iniciales, fechaBonita, normalizar } from '../ui.jsx';
 
 function FormEmpleado({ inicial, departamentos, onCerrar, onListo }) {
   const avisar = useToast();
@@ -98,10 +98,21 @@ export default function Empleados({ onAsignar }) {
   const [busqueda, setBusqueda] = useState('');
   const [form, setForm] = useState(null);       // null | {} | empleado
   const [detalle, setDetalle] = useState(null); // id
+  const [expandidos, setExpandidos] = useState({});
+  const [cargando, setCargando] = useState(true);
+  const [borrar, setBorrar] = useState(null);   // empleado a eliminar
 
-  const cargar = () => {
-    api.get('/api/empleados').then(setEmpleados).catch(() => {});
-    api.get('/api/departamentos').then(setDepartamentos).catch(() => {});
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const [emps, depts] = await Promise.all([
+        api.get('/api/empleados'),
+        api.get('/api/departamentos')
+      ]);
+      setEmpleados(emps);
+      setDepartamentos(depts);
+    } catch (e) {}
+    finally { setCargando(false); }
   };
   useEffect(() => { cargar(); }, []);
 
@@ -127,6 +138,18 @@ export default function Empleados({ onAsignar }) {
     } catch (err) { avisar(err.message, 'error'); }
   };
 
+  const confirmarBorrar = async (borrar) => {
+    try {
+      await api.del(`/api/empleados/${borrar.id_empleado}`);
+      avisar(`${borrar.nombre} eliminado`);
+      cargar();
+    } catch (err) { avisar(err.message, 'error'); }
+  };
+
+  const toggleGrupo = (depto) => {
+    setExpandidos(prev => ({ ...prev, [depto]: !prev[depto] }));
+  };
+
   return (
     <>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -136,34 +159,44 @@ export default function Empleados({ onAsignar }) {
         <button className="btn" onClick={() => setForm({})}>＋ Nuevo empleado</button>
       </div>
 
-      {grupos.length === 0 && <div className="card"><Vacio icono="👥" texto="No se encontraron empleados" /></div>}
+      {cargando && <div className="card"><Cargando /></div>}
+      {!cargando && grupos.length === 0 && <div className="card"><Vacio icono="👥" texto="No se encontraron empleados" /></div>}
 
-      {grupos.map(([depto, lista]) => (
+      {grupos.map(([depto, lista]) => {
+        const abierto = busqueda.trim() !== '' || !!expandidos[depto]; // al buscar se expande todo
+        return (
         <div key={depto}>
-          <div className="grupo-titulo">📁 {depto} <span className="grupo-linea" /> <span style={{ color: 'var(--muted)', fontWeight: 500 }}>{lista.length}</span></div>
-          <div className="emp-grid">
-            {lista.map(e => (
-              <div key={e.id_empleado} className={`emp-card ${e.activo ? '' : 'inactivo'}`}>
-                <div className="emp-top">
-                  <div className="avatar" style={{ width: 38, height: 38, fontSize: 14 }}>{iniciales(e.nombre)}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="emp-nombre">{e.nombre}</div>
-                    <div className="emp-depto">
-                      {+e.herramientas > 0 ? `${e.herramientas} pieza(s) asignada(s)` : 'sin herramientas'}
-                    </div>
-                  </div>
-                  {e.activo ? <span className="badge ok">Activo</span> : <span className="badge neutro">Inactivo</span>}
-                </div>
-                <div className="emp-actions">
-                  <button className="btn sm" onClick={() => setDetalle(e.id_empleado)}>Ver herramientas</button>
-                  <button className="btn ghost sm" onClick={() => setForm(e)}>✏️</button>
-                  <button className="btn ghost sm" onClick={() => toggle(e)}>{e.activo ? '🚫 Baja' : '✅ Alta'}</button>
-                </div>
-              </div>
-            ))}
+          <div className="grupo-titulo" onClick={() => toggleGrupo(depto)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+            <span style={{ marginRight: 8, display: 'inline-block', transition: 'transform 0.2s' }}>{abierto ? '▼' : '▶'}</span>
+            📁 {depto} <span className="grupo-linea" /> <span style={{ color: 'var(--muted)', fontWeight: 500 }}>{lista.length}</span>
           </div>
+          {abierto && (
+            <div className="emp-grid">
+              {lista.map(e => (
+                <div key={e.id_empleado} className={`emp-card ${e.activo ? '' : 'inactivo'}`}>
+                  <div className="emp-top">
+                    <div className="avatar" style={{ width: 38, height: 38, fontSize: 14 }}>{iniciales(e.nombre)}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="emp-nombre">{e.nombre}</div>
+                      <div className="emp-depto">
+                        {+e.herramientas > 0 ? `${e.herramientas} pieza(s) asignada(s)` : 'sin herramientas'}
+                      </div>
+                    </div>
+                    {e.activo ? <span className="badge ok">Activo</span> : <span className="badge neutro">Inactivo</span>}
+                  </div>
+                  <div className="emp-actions">
+                    <button className="btn sm" onClick={() => setDetalle(e.id_empleado)}>Ver herramientas</button>
+                    <button className="btn ghost sm" onClick={() => setForm(e)}>✏️</button>
+                    <button className="btn ghost sm" onClick={() => toggle(e)}>{e.activo ? '🚫 Baja' : '✅ Alta'}</button>
+                    <button className="btn ghost sm" title="Eliminar definitivamente" onClick={() => setBorrar(e)}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      ))}
+        );
+      })}
 
       {form && (
         <FormEmpleado inicial={form.id_empleado ? form : null} departamentos={departamentos}
@@ -173,6 +206,12 @@ export default function Empleados({ onAsignar }) {
       {detalle && (
         <DetalleEmpleado id={detalle} onCerrar={() => setDetalle(null)} onCambio={cargar}
           onAsignar={(id) => { setDetalle(null); onAsignar(id); }} />
+      )}
+      {borrar && (
+        <Confirmar titulo="Eliminar empleado"
+          mensaje={`¿Eliminar a "${borrar.nombre}" DEFINITIVAMENTE? Se borra también todo su historial de herramientas. Si solo dejó de trabajar aquí, usa mejor "🚫 Baja" para conservar el registro.`}
+          textoSi="Sí, eliminar"
+          onSi={() => { confirmarBorrar(borrar); setBorrar(null); }} onNo={() => setBorrar(null)} />
       )}
     </>
   );

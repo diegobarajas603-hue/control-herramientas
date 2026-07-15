@@ -68,6 +68,8 @@ const SCHEMA = [
     fecha DATE DEFAULT NULL,
     hora TIME DEFAULT NULL,
     pdf VARCHAR(255) DEFAULT NULL,
+    departamento_id INT DEFAULT NULL,
+    descripcion LONGTEXT DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
   `CREATE TABLE IF NOT EXISTS usuarios (
@@ -81,10 +83,21 @@ const SCHEMA = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`
 ];
 
+// columnas agregadas después del lanzamiento: CREATE TABLE IF NOT EXISTS no las
+// agrega a tablas ya existentes, y un import de respaldo recrea la tabla sin ellas
+async function asegurarColumnas() {
+  const [cols] = await pool.query("SHOW COLUMNS FROM salidas_almacen LIKE 'departamento_id'");
+  if (!cols.length) {
+    await pool.query('ALTER TABLE salidas_almacen ADD COLUMN departamento_id INT DEFAULT NULL, ADD COLUMN descripcion LONGTEXT DEFAULT NULL');
+    console.log('[init] Columnas departamento_id y descripcion agregadas a salidas_almacen');
+  }
+}
+
 async function init() {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
   for (const sql of SCHEMA) await pool.query(sql);
+  await asegurarColumnas();
 
   const [rows] = await pool.query('SELECT COUNT(*) c FROM usuarios');
   if (rows[0].c === 0) {
@@ -106,4 +119,4 @@ async function init() {
   }
 }
 
-module.exports = { pool, init, UPLOADS_DIR };
+module.exports = { pool, init, asegurarColumnas, UPLOADS_DIR };
